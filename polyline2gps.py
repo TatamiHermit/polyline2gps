@@ -10,23 +10,22 @@ import time
 import datetime
 import logging
 from functools import wraps
+# import modin.padas as pd
 
-# global src, des, vs_h
 
 def func_time(f):
     """
-    简单记录执行时间
+    记录执行时间
     :param f:
     :return:
     """
     @wraps(f)
-    def wrapper(*args, **kwargs):
+    def wrapper(*angs, **kwangs):
         start_time: float = time.time()
-        result = f(*args, **kwargs)
+        result = f(*angs, **kwangs)
         end_time: float = time.time()
         logger.info(f'{f.__name__}总计用时{round((end_time - start_time),2)}')
         return result
-
     return wrapper
 
 
@@ -48,7 +47,6 @@ def write_log(name):
 
     logger.addHandler(fh)
     logger.addHandler(ch)
-
 
 
 def gcj2wgs(location):
@@ -138,7 +136,6 @@ def get_polyline(src, des):
 
 
 # 转成十六进制
-
 def to_hex(wgs):
     msarc = wgs * 3600 * 1000
     hexarc = hex(int(msarc)).upper()
@@ -230,7 +227,7 @@ def interpolation(loc1, loc2, a, b, vs_h):
 def interval_after_lonlat():  # 将插值后的经纬度值写入表中
     interLonList = []
     interLatList = []
-    global vs_h
+    global vs_h, df
     # df = pd.read_excel(file_path).drop_duplicates().head(10)
     df = pd.read_excel(file_path).drop_duplicates()
     lat = pd.Series(df['lat_wgs84']).tolist()
@@ -250,39 +247,11 @@ def interval_after_lonlat():  # 将插值后的经纬度值写入表中
     df = pd.concat([pd.DataFrame({'lonValues': interLonList}), pd.DataFrame(
         {'latValues': interLatList})], axis=1)
     df.to_excel(file_path, sheet_name="Coordinates", index=False)
-
-
-
-def heading_angle(lon_a, lat_a, lon_b, lat_b):  # 计算车辆的航向角
-    y = math.sin(lon_b - lon_a) * math.cos(lat_b)
-    x = math.cos(lat_a) * math.sin(lat_b) - math.sin(lat_a) * \
-        math.cos(lat_b) * math.cos(lon_b - lon_a)
-    # angle = math.atan2(y,x)
-    angle = round(math.degrees(math.atan2(y, x)))
-    if angle < 0:
-        angle = angle + 360
-    return angle
-
-
-@func_time
-def angle_list():  # 航向角列表
-    angle = []
-    # df = pd.read_excel(file_path).drop_duplicates().head(10)
-    df = pd.read_excel(file_path).drop_duplicates()
-    latList = pd.Series(df['lonValues']).tolist()
-    lonList = pd.Series(df['latValues']).tolist()
-    for i in range(len(latList)):
-        if i < len(latList) - 1:
-            angle.append(heading_angle(
-                lonList[i], latList[i], lonList[i + 1], latList[i + 1]))
-    angle.append(angle[i - 1])
-    return angle
-    # print(angle)
-
+    # print(df)
 
 def series(lst, length):
     """
-    生成序列，序列长度等于各列长
+    生成burstID序列，序列长度等于各列长
     :param lst: 传[0, 8, 16, 24] 或 [0,1,2,3]
     :param length: 生成序列的长度
     :return: 返回生成的序列
@@ -299,178 +268,288 @@ def series(lst, length):
     return a[0:length]
 
 
-def to_msg(lhex, can_id):
-    """
-    :param lhex: 传lat_hex_lon列的hex值
-    :param can_id: 纬度为'35C'，经度为'35D'
-    :return: msg: 十六进制的报文
-    """
-    msg = []
-    brst_ids = [0, 8, 16, 24]
-    for i in range(len(lhex)):
-        dec_byte0 = int(lhex[i][0:2], 16)
-        dec_byte1 = int(lhex[i][2:5], 16)
-        dec_byte2 = int(lhex[i][5:8], 16)
-        dec_byte3 = int(lhex[i][8:12], 16)
-        # bin_byte6 =[11110000,01000000,00000000,10000000,11000000]
-        dec_byte6 = series(brst_ids, len(lhex))[i]
-        dec_byte4 = 0
-        dec_byte5 = 0
-        id = int(int(can_id, 16) / 8)
-        # 公式：Checksum =(Byte[0] + Byte[1] + Byte[2] + Byte[3] + Byte[4] +
-        # Byte[5] + ((Byte[6] & 0xF8) >> 3) + (CAN_ID / 8))；---01000xxx &
-        # 11111000--
-        checksum = dec_byte0 + dec_byte1 + dec_byte2 + \
-            dec_byte3 + dec_byte4 + dec_byte5 + id + dec_byte6
-        bin_lhex = int(lhex[i].replace(' ', ''), 16)
-        a = '{:032b}'.format(bin_lhex)  # 补0
-        b = '0000000000000000'
-        c = '{:05b}'.format(dec_byte6)  # '01000'
-        d = '{:011b}'.format(checksum)
-        e = a + b + c + d  # 拼接成64个bit字符串
-        msg_0x = hex(int(e, 2)).upper()  # 求a,b,c,d,e各二进制字符串
-        # msg = '{:016b}'.format(f)
-        mg = msg_0x[2:] if len(msg_0x) == 18 else'0' * \
-            (18 - len(msg_0x)) + msg_0x[2:]  # 去掉0X
-        msg.append(mg)
-    return msg
+def heading_angle(lon_a, lat_a, lon_b, lat_b):  # 计算车辆的航向角
+    y = math.sin(lon_b - lon_a) * math.cos(lat_b)
+    x = math.cos(lat_a) * math.sin(lat_b) - math.sin(lat_a) * \
+        math.cos(lat_b) * math.cos(lon_b - lon_a)
+    # angle = math.atan2(y,x)
+    angle = round(math.degrees(math.atan2(y, x)))
+    if angle < 0:
+        angle = angle + 360
+    return angle
 
 
 @func_time
-def datetime_to_msg(gps_time_can_id):
-    signal = []
+def angle_list():  # 航向角列表
+    angle = []
+    latList = df['lonValues'].values.tolist()
+    lonList = df['latValues'].values.tolist()
+    for i in range(len(latList)):
+        if i < len(latList) - 1:
+            angle.append(heading_angle(lonList[i], latList[i], lonList[i + 1], latList[i + 1]))
+    angle.append(angle[i - 1])
+    # print(len(angle))
+    return angle
+
+
+@func_time
+def datetime_to_msg(can_id):
+    global date
     brst_ids = [0, 1, 2, 3]
-    # basetime = input("请输入当前日期时间：")
-    time_series = pd.date_range(
+    # brst_ids = [3, 0, 1, 2]
+    # seq = 1000000
+    id = int(int(can_id, 16) / 8)
+    time_list = pd.date_range(
         basetime,
         freq="100ms",
         periods=len(df)).strftime('%Y-%m-%d-%H-%M-%S-%f')
-    for index, gpstime in enumerate(time_series):
-        # print(index,time_series)
-        year = gpstime.split('-')[0][2:]
-        month = gpstime.split('-')[1]
-        day = gpstime.split('-')[2]
-        hour = gpstime.split('-')[3]
-        min = gpstime.split('-')[4]
-        sec = gpstime.split('-')[5]
-        msec = gpstime.split('-')[6][0:3]
-        bin_year = '{:09b}'.format(int(year))
-        bin_month = '{:05b}'.format(int(month))
-        bin_day = '{:06b}'.format(int(day))
-        bin_hour = '{:06b}'.format(int(hour))
-        bin_min = '{:07b}'.format(int(min))
-        bin_sec = '{:07b}'.format(int(sec))
-        bin_msec = '{:011b}'.format(int(msec))
-        bin_brstid = '{:02b}'.format(series(brst_ids, len(df))[index])
-        bin_datetime = bin_year + bin_month + bin_day + bin_hour + bin_min + bin_sec + bin_msec + bin_brstid
-        byte0 = bin_datetime[0:8]
-        byte1 = bin_datetime[8:16]
-        byte2 = bin_datetime[16:24]
-        byte3 = bin_datetime[24:32]
-        byte4 = bin_datetime[32:40]
-        byte5 = bin_datetime[40:48]
-        # byte6 = bin_datetime[48:53]
-        id = int(int(gps_time_can_id, 16) / 8)
-        byte6 = int((bin_datetime[48:53] + '111'), 2) >> 3
-        checksum = int(byte0, 2) + int(byte1, 2) + int(byte2, 2) + int(byte3, 2) + int(byte4, 2) + int(byte5, 2) + id + byte6
-        bin_checksum = '{:011b}'.format(checksum)
-        bin_signal = bin_year + bin_month + bin_day + bin_hour + bin_min + bin_sec + bin_msec + bin_brstid + bin_checksum
-        sign_0x = hex(int(bin_signal, 2)).upper()  # 求a,b,c,d,e各二进制字符串
-        sg = '0' * (18 - len(sign_0x)) + sign_0x[2:]  # 去掉0X
-        signal.append(sg)
-    return signal
+    a = time_list.str.split('-', expand=True)
+    b = pd.Series(5., a)
+    date = b.reset_index()
+    date.columns = ['YY', 'MM', 'DD', 'H', 'M', 'S', 'MS', '0']
+    date['YY'] = date['YY'].str[2:]
+    date['MS'] = date['MS'].str[:3]
+    date['ID'] = series(brst_ids, len(df))
+    date['BIN-YY'] = date['YY'].apply(lambda x: '{:09b}'.format(int(x)))
+    date['BIN-MM'] = date['MM'].apply(lambda x: '{:05b}'.format(int(x)))
+    date['BIN-DD'] = date['DD'].apply(lambda x: '{:06b}'.format(int(x)))
+    date['BIN-H'] = date['H'].apply(lambda x: '{:06b}'.format(int(x)))
+    date['BIN-M'] = date['M'].apply(lambda x: '{:07b}'.format(int(x)))
+    date['BIN-S'] = date['S'].apply(lambda x: '{:07b}'.format(int(x)))
+    date['BIN-MS'] = date['MS'].apply(lambda x: '{:011b}'.format(int(x)))
+    date['BIN-ID'] = date['ID'].apply(lambda x: '{:02b}'.format(int(x)))
+    date['BIN-53'] = date['BIN-YY']+date['BIN-MM']+date['BIN-DD']+date['BIN-H']+date['BIN-M']+date['BIN-S']+date['BIN-MS']+date['BIN-ID']
+    date['B0'] = date['BIN-53'].str[0:8]
+    date['B1'] = date['BIN-53'].str[8:16]
+    date['B2'] = date['BIN-53'].str[16:24]
+    date['B3'] = date['BIN-53'].str[24:32]
+    date['B4'] = date['BIN-53'].str[32:40]
+    date['B5'] = date['BIN-53'].str[40:48]
+    date['B6-temp'] = date['BIN-53'].str[48:53] + '000'
+    # checksum = int(byte0, 2) + int(byte1, 2) + int(byte2, 2) + int(byte3, 2) + int(byte4, 2) + int(byte5, 2) + id + byte6                                                                                        2) + id + byte6
+    date['B0-int'] = date['B0'].apply(lambda x: int(x, 2))
+    date['B1-int'] = date['B1'].apply(lambda x: int(x, 2))
+    date['B2-int'] = date['B2'].apply(lambda x: int(x, 2))
+    date['B3-int'] = date['B3'].apply(lambda x: int(x, 2))
+    date['B4-int'] = date['B4'].apply(lambda x: int(x, 2))
+    date['B5-int'] = date['B5'].apply(lambda x: int(x, 2))
+    date['B6-temp-int'] = date['B6-temp'].apply(lambda x: int(x, 2))
+    date['B6&F8'] = np.bitwise_and(date['B6-temp-int'], 248)
+    date['B6&F8 >>3'] = np.right_shift(date['B6&F8'], 3)
+    date['CHKSUM'] = date['B0-int']+date['B1-int']+date['B2-int']+date['B3-int']+date['B4-int']+date['B5-int']+date['B6&F8 >>3']+id
+    date['BIN-CHKSUM'] = date['CHKSUM'].apply(lambda x: '{:011b}'.format(int(x)))
+    date['BIN-64'] = date['BIN-53']+date['BIN-CHKSUM']
+    date['B6'] = date['BIN-64'].str[48:56]
+    date['B7'] = date['BIN-64'].str[56:64]
+    date['B6-int'] = date['B6'].apply(lambda x: int(x, 2))
+    date['B7-int'] = date['B7'].apply(lambda x: int(x, 2))
+    date['B0-hex'] = date['B0-int'].apply(lambda x: '{0:02X}'.format(x))
+    date['B1-hex'] = date['B1-int'].apply(lambda x: '{0:02X}'.format(x))
+    date['B2-hex'] = date['B2-int'].apply(lambda x: '{0:02X}'.format(x))
+    date['B3-hex'] = date['B3-int'].apply(lambda x: '{0:02X}'.format(x))
+    date['B4-hex'] = date['B4-int'].apply(lambda x: '{0:02X}'.format(x))
+    date['B5-hex'] = date['B5-int'].apply(lambda x: '{0:02X}'.format(x))
+    date['B6-hex'] = date['B6-int'].apply(lambda x: '{0:02X}'.format(x))
+    date['B7-hex'] = date['B7-int'].apply(lambda x: '{0:02X}'.format(x))
+    date['time'] = [format((0.001 + i / 10), '0.6f') for i in range(len(df))]
+    date['channel'] = 0
+    date['asc-msg'] = date['time'] + " 0 " + can_id + '             Rx  d 8 ' + \
+                     date['B0-hex'] + ' ' + date['B1-hex'] + ' ' + date['B2-hex'] + ' ' + date['B3-hex'] + ' ' \
+                     + date['B4-hex'] + ' ' + date['B5-hex'] + ' ' + date['B6-hex'] + ' ' + date['B7-hex'] + ' '
+    # print(date['asc-msg'])
+    # ang.to_csv("date.csv", index = False)  # 按指定列名顺序输出df
+    return date[['time', 'asc-msg']]
 
 
 @func_time
-def angle_to_msg(gps_angle_can_id):
-    anglemsg = []
-    anglels = angle_list()
-    # vs_h = 60 #车速
-    elevation = 400  # cm,上海的海拔
+def angle_to_msg(can_id):
+    """
+    :param can_id: 351
+    :return: msg: 十六进制的报文
+    """
+    global ang
+    msg = []
     brst_ids = [0, 1, 2, 3]
-    for item in range(len(anglels)):
-        bin_angle = '{:013b}'.format(int((anglels[item] + 90) * 10))
-        bin_vs_h = '{:08b}'.format(int(vs_h)) + '0'
-        bin_elevation = '{:022b}'.format(int(100000 + elevation)) + '0000'
-        bin_brstids = '{:02b}'.format(
-            series(brst_ids, len(anglels))[item]) + '000'
-        bin_heading = bin_angle + bin_vs_h + bin_elevation + bin_brstids
-        byte0 = bin_heading[0:8]
-        byte1 = bin_heading[8:16]
-        byte2 = bin_heading[16:24]
-        byte3 = bin_heading[24:32]
-        byte4 = bin_heading[32:40]
-        byte5 = bin_heading[40:48]
-        id = int(int(gps_angle_can_id, 16) / 8)
-        byte6 = int((bin_heading[48:53] + '111'), 2) >> 3
-        checksum = int(byte0, 2) + int(byte1, 2) + int(byte2, 2) + \
-            int(byte3, 2) + int(byte4, 2) + int(byte5, 2) + id + byte6
-        bin_checksum = '{:011b}'.format(checksum)
-        bin_anglemsg = bin_angle + bin_vs_h + bin_elevation + bin_brstids + bin_checksum
-        anglemsg_0x = hex(int(bin_anglemsg, 2)).upper()  # 求a,b,c,d,e各二进制字符串
-        ag = '0' * (18 - len(anglemsg_0x)) + anglemsg_0x[2:]  # 去掉0X
-        anglemsg.append(ag)
-    # print(anglemsg)
-    return anglemsg
-
+    id = int(int(can_id, 16) / 8)
+    ang = pd.DataFrame()
+    ang['angle'] = angle_list()
+    ang['speed'] = vs_h
+    ang['elevation'] = elevation+1000000
+    ang['ID'] = series(brst_ids, len(df))
+    ang['blank'] = 0
+    ang['BIN-angle'] = ang['angle'].apply(lambda x: '{:013b}'.format((int(x) + 90) * 10))
+    ang['BIN-speed'] = ang['speed'].apply(lambda x: '{:08b}'.format(int(x))) + '0'
+    ang['BIN-elevation'] = ang['elevation'].apply(lambda x: '{:023b}'.format(int(x)))
+    ang['BIN-ID'] = ang['ID'].apply(lambda x: '{:06b}'.format(int(x)))
+    ang['BIN-blank'] = ang['blank'].apply(lambda x: '{:03b}'.format(int(x)))
+    ang['BIN-53'] = ang['BIN-angle'] + ang['BIN-speed'] + ang['BIN-elevation'] + ang['BIN-ID'] + ang['BIN-blank']
+    ang['B0'] = ang['BIN-53'].str[0:8]
+    ang['B1'] = ang['BIN-53'].str[8:16]
+    ang['B2'] = ang['BIN-53'].str[16:24]
+    ang['B3'] = ang['BIN-53'].str[24:32]
+    ang['B4'] = ang['BIN-53'].str[32:40]
+    ang['B5'] = ang['BIN-53'].str[40:48]
+    ang['B6-temp'] = ang['BIN-53'].str[48:53] + '000'
+    ang['B0-int'] = ang['B0'].apply(lambda x: int(x, 2))
+    ang['B1-int'] = ang['B1'].apply(lambda x: int(x, 2))
+    ang['B2-int'] = ang['B2'].apply(lambda x: int(x, 2))
+    ang['B3-int'] = ang['B3'].apply(lambda x: int(x, 2))
+    ang['B4-int'] = ang['B4'].apply(lambda x: int(x, 2))
+    ang['B5-int'] = ang['B5'].apply(lambda x: int(x, 2))
+    ang['B6-temp-int'] = ang['B6-temp'].apply(lambda x: int(x, 2))
+    ang['B6&F8'] = np.bitwise_and(ang['B6-temp-int'], 248)  # 248=0xF8
+    ang['B6&F8 >>3'] = np.right_shift(ang['B6&F8'], 3)
+    ang['CHKSUM'] = ang['B0-int']+ang['B1-int']+ang['B2-int']+ang['B3-int']+ang['B4-int']+ang['B5-int']+ang['B6&F8 >>3']+id
+    ang['BIN-CHKSUM'] = ang['CHKSUM'].apply(lambda x: '{:011b}'.format(int(x)))
+    ang['BIN-64'] = ang['BIN-53']+ang['BIN-CHKSUM']
+    ang['B6'] = ang['BIN-64'].str[48:56]
+    ang['B7'] = ang['BIN-64'].str[56:64]
+    ang['B6-int'] = ang['B6'].apply(lambda x: int(x, 2))
+    ang['B7-int'] = ang['B7'].apply(lambda x: int(x, 2))
+    ang['B0-hex'] = ang['B0-int'].apply(lambda x: '{0:02X}'.format(x))
+    ang['B1-hex'] = ang['B1-int'].apply(lambda x: '{0:02X}'.format(x))
+    ang['B2-hex'] = ang['B2-int'].apply(lambda x: '{0:02X}'.format(x))
+    ang['B3-hex'] = ang['B3-int'].apply(lambda x: '{0:02X}'.format(x))
+    ang['B4-hex'] = ang['B4-int'].apply(lambda x: '{0:02X}'.format(x))
+    ang['B5-hex'] = ang['B5-int'].apply(lambda x: '{0:02X}'.format(x))
+    ang['B6-hex'] = ang['B6-int'].apply(lambda x: '{0:02X}'.format(x))
+    ang['B7-hex'] = ang['B7-int'].apply(lambda x: '{0:02X}'.format(x))
+    ang['time'] = [format((0.000 + i / 10), '0.6f') for i in range(len(df))]
+    ang['channel'] = 0
+    ang['asc-msg'] = ang['time'] + " 0 " + can_id + '             Rx  d 8 ' + \
+                     ang['B0-hex'] + ' ' + ang['B1-hex'] + ' ' + ang['B2-hex'] + ' ' + ang['B3-hex'] + ' ' \
+                     + ang['B4-hex'] + ' ' + ang['B5-hex'] + ' ' + ang['B6-hex'] + ' ' + ang['B7-hex'] + ' '
+    # print(ang['asc-msg'])
+    # ang.to_csv("ang.csv", index = False)  # 按指定列名顺序输出df
+    return ang[['time', 'asc-msg']]
 
 @func_time
-def insert_col_to_excel():
-    global df
-    global message
-    lon_hex = []
-    lat_hex = []
-    df = pd.read_excel(file_path, sheet_name="Coordinates")  # Coordinates
-    # writer = pd.ExcelWriter(file_path,sheet_name = "Sheet1")
-    lon_hex = [to_hex(i) for i in df['lonValues']]  # 返回lon_hex列表
-    lat_hex = [to_hex(j) for j in df['latValues']]  # 返回lat_hex列表
-    df['time_date'] = [format(i / 10, '0.6f') for i in range(len(df))]  # "351"
-    df['time_angle'] = [format((0.001 + i / 10),'0.6f') for i in range(len(df))]  # "353"
-    df['time_lat'] = [format((0.002 + i / 10),'0.6f') for i in range(len(df))]  # "35C"
-    df['time_lon'] = [format((0.003 + i / 10),'0.6f') for i in range(len(df))]  # "35D"
-    df['CAN_number'] = [0] * len(df)
-    df['canid_date'] = [gps_date_can_id] * int((len(df)))
-    df['canid_angle'] = [gps_angle_can_id] * int((len(df)))
-    df['canid_lat'] = [gps_angle_can_id] * int((len(df)))
-    df['canid_lon'] = [gps_lat_can_id] * int((len(df)))
-    df['Frame_direction'] = ['Rx'] * len(df)
-    df['D'] = ['d'] * len(df)
-    df['DLC'] = [8] * len(df)
-    msg_date = datetime_to_msg(gps_date_can_id)
-    msg_angle = angle_to_msg(gps_angle_can_id)
-    msg_lat = to_msg(lat_hex, gps_lat_can_id)
-    df['msg_lat'] = msg_lat   # print(df['msg_lat'+'i'])
-    msg_lon = to_msg(lon_hex, gps_lon_can_id)
-    df['msg_lon'] = msg_lon
-    msgDate = [(re.sub('(..)', r'\1 ', msg_date[i]).rstrip()) for i in range(len(df))]
-    df['MsgDate'] = msgDate
-    df['MsgAngle'] = [(re.sub('(..)', r'\1 ',msg_angle[i]).rstrip()) for i in range(len(df))]
-    msgLat = [(re.sub('(..)', r'\1 ', msg_lat[i]).rstrip()) for i in range(len(df))]  # 06A1ED0C0000C223处理成06 A1 ED 0C 00 00 C2 23
-    df['MsgLat'] = msgLat
-    msgLon = [(re.sub('(..)', r'\1 ', msg_lon[i]).rstrip()) for i in range(len(df))]
-    df['MsgLon'] = msgLon
-    # msgLon= "".join([" " + e if index > 0 and index % 2 == 0 else e for index, e in enumerate(msg_lon[i])])
-    # 合并列
-    df['Message_date'] = df['time_date'].map(str) + ' ' + df['CAN_number'].map(str) + ' ' + df['canid_date'] + \
-        '             ' + df['Frame_direction'] + '  ' + df['D'] + ' ' + df['DLC'].map(str) + ' ' + df['MsgDate']
-    df['Message_angle'] = df['time_angle'].map(str) + ' ' + df['CAN_number'].map(str) + ' ' + df['canid_angle'] + \
-        '             ' + df['Frame_direction'] + '  ' + df['D'] + ' ' + df['DLC'].map(str) + ' ' + df['MsgAngle']
-    df['Message_lat'] = df['time_lat'].map(str) + ' ' + df['CAN_number'].map(str) + ' ' + df['canid_lat'] + \
-        '             ' + df['Frame_direction'] + '  ' + df['D'] + ' ' + df['DLC'].map(str) + ' ' + df['MsgLat']
-    df['Message_lon'] = df['time_lon'].map(str) + ' ' + df['CAN_number'].map(str) + ' ' + df['canid_lon'] + \
-        '             ' + df['Frame_direction'] + '  ' + df['D'] + ' ' + df['DLC'].map(str) + ' ' + df['MsgLon']
-    df.to_excel(file_path, sheet_name="Coordinates", index=False)
+def lat_to_msg(can_id):
+    """
+    :param data: 传lat_hex_lon列的hex值
+    :param can_id: 纬度为'35C'，经度为'35D'
+    :return: msg: 十六进制的报文
+    """
+    global lat
+    msg = []
+    brst_ids = [0, 1, 2, 3]
+    id = int(int(can_id, 16) / 8)
+    # print('数据总长度为', len(df))
+    lat = pd.DataFrame()
+    lat['BIN-lon'] = df['latValues'].apply(lambda x: '{:032b}'.format(int(x*3600*1000)))
+    lat['BIN-spare'] = '0000000000000000' #16位
+    lat['ID'] = series(brst_ids, len(df))
+    lat['BIN-ID'] = lat['ID'].apply(lambda x: '{:05b}'.format(int(x)))
+    lat['BIN-53'] = lat['BIN-lon'] + lat['BIN-spare'] + lat['BIN-ID']
+    lat['B0'] = lat['BIN-53'].str[0:8]
+    lat['B1'] = lat['BIN-53'].str[8:16]
+    lat['B2'] = lat['BIN-53'].str[16:24]
+    lat['B3'] = lat['BIN-53'].str[24:32]
+    lat['B4'] = lat['BIN-53'].str[32:40]
+    lat['B5'] = lat['BIN-53'].str[40:48]
+    lat['B6-temp'] = lat['BIN-53'].str[48:53] + '000'
+    lat['B0-int'] = lat['B0'].apply(lambda x: int(x, 2))
+    lat['B1-int'] = lat['B1'].apply(lambda x: int(x, 2))
+    lat['B2-int'] = lat['B2'].apply(lambda x: int(x, 2))
+    lat['B3-int'] = lat['B3'].apply(lambda x: int(x, 2))
+    lat['B4-int'] = lat['B4'].apply(lambda x: int(x, 2))
+    lat['B5-int'] = lat['B5'].apply(lambda x: int(x, 2))
+    lat['B6-temp-int'] = lat['B6-temp'].apply(lambda x: int(x, 2))
+    lat['B6&F8'] = np.bitwise_and(lat['B6-temp-int'], 248)
+    lat['B6&F8 >>3'] = np.right_shift(lat['B6&F8'], 3)
+    lat['CHKSUM'] = lat['B0-int']+lat['B1-int']+lat['B2-int']+lat['B3-int']+lat['B4-int']+lat['B5-int']+lat['B6&F8 >>3']+id
+    lat['BIN-CHKSUM'] = lat['CHKSUM'].apply(lambda x: '{:011b}'.format(int(x)))
+    lat['BIN-64'] = lat['BIN-53']+lat['BIN-CHKSUM']
+    lat['B6'] = lat['BIN-64'].str[48:56]
+    lat['B7'] = lat['BIN-64'].str[56:64]
+    lat['B6-int'] = lat['B6'].apply(lambda x: int(x, 2))
+    lat['B7-int'] = lat['B7'].apply(lambda x: int(x, 2))
+    lat['B0-hex'] = lat['B0-int'].apply(lambda x: '{0:02X}'.format(x))
+    lat['B1-hex'] = lat['B1-int'].apply(lambda x: '{0:02X}'.format(x))
+    lat['B2-hex'] = lat['B2-int'].apply(lambda x: '{0:02X}'.format(x))
+    lat['B3-hex'] = lat['B3-int'].apply(lambda x: '{0:02X}'.format(x))
+    lat['B4-hex'] = lat['B4-int'].apply(lambda x: '{0:02X}'.format(x))
+    lat['B5-hex'] = lat['B5-int'].apply(lambda x: '{0:02X}'.format(x))
+    lat['B6-hex'] = lat['B6-int'].apply(lambda x: '{0:02X}'.format(x))
+    lat['B7-hex'] = lat['B7-int'].apply(lambda x: '{0:02X}'.format(x))
+    lat['time'] = [format((0.002 + i / 10),'0.6f') for i in range(len(df))]
+    lat['channel'] = 0
+    lat['asc-msg'] = lat['time'] + " 0 " + can_id + '             Rx  d 8 ' + \
+                     lat['B0-hex'] + ' ' + lat['B1-hex'] + ' ' + lat['B2-hex'] + ' ' + lat['B3-hex'] + ' ' \
+                     + lat['B4-hex'] + ' ' + lat['B5-hex'] + ' ' + lat['B6-hex'] + ' ' + lat['B7-hex'] + ' '
+    # print(lat['asc-msg'])
+    # lat.to_csv("lat.csv", index=False)  # 按指定列名顺序输出df
+    return lat[['time', 'asc-msg']]
+
+@func_time
+def lon_to_msg(can_id):
+    """
+    :param data: 传lat_hex_lon列的hex值
+    :param can_id: lat纬度为'35C'，lon经度为'35D'
+    :return: msg: 十六进制的报文
+    """
+    global lon
+    msg = []
+    brst_ids = [0, 8, 16, 24]
+    id = int(int(can_id, 16) / 8)
+    # print('数据总长度为', len(df))
+    lon = pd.DataFrame()
+    lon['BIN-lon'] = df['lonValues'].apply(lambda x: '{:032b}'.format(int(x*3600*1000)))
+    lon['BIN-spare'] = '0000000000000000' #16位
+    lon['ID'] = series(brst_ids, len(df))
+    lon['BIN-ID'] = lon['ID'].apply(lambda x: '{:05b}'.format(int(x)))
+    lon['BIN-53'] = lon['BIN-lon'] + lon['BIN-spare'] + lon['BIN-ID']
+    lon['B0'] = lon['BIN-53'].str[0:8]
+    lon['B1'] = lon['BIN-53'].str[8:16]
+    lon['B2'] = lon['BIN-53'].str[16:24]
+    lon['B3'] = lon['BIN-53'].str[24:32]
+    lon['B4'] = lon['BIN-53'].str[32:40]
+    lon['B5'] = lon['BIN-53'].str[40:48]
+    lon['B6-temp'] = lon['BIN-53'].str[48:53] + '000'
+    lon['B0-int'] = lon['B0'].apply(lambda x: int(x, 2))
+    lon['B1-int'] = lon['B1'].apply(lambda x: int(x, 2))
+    lon['B2-int'] = lon['B2'].apply(lambda x: int(x, 2))
+    lon['B3-int'] = lon['B3'].apply(lambda x: int(x, 2))
+    lon['B4-int'] = lon['B4'].apply(lambda x: int(x, 2))
+    lon['B5-int'] = lon['B5'].apply(lambda x: int(x, 2))
+    lon['B6-temp-int'] = lon['B6-temp'].apply(lambda x: int(x, 2))
+    lon['B6&F8'] = np.bitwise_and(lon['B6-temp-int'], 248)
+    lon['B6&F8 >>3'] = np.right_shift(lon['B6&F8'], 3)
+    lon['CHKSUM'] = lon['B0-int']+lon['B1-int']+lon['B2-int']+lon['B3-int']+lon['B4-int']+lon['B5-int']+lon['B6&F8 >>3']+id
+    lon['BIN-CHKSUM'] = lon['CHKSUM'].apply(lambda x: '{:011b}'.format(int(x)))
+    lon['BIN-64'] = lon['BIN-53']+lon['BIN-CHKSUM']
+    lon['B6'] = lon['BIN-64'].str[48:56]
+    lon['B7'] = lon['BIN-64'].str[56:64]
+    lon['B6-int'] = lon['B6'].apply(lambda x: int(x, 2))
+    lon['B7-int'] = lon['B7'].apply(lambda x: int(x, 2))
+    lon['B0-hex'] = lon['B0-int'].apply(lambda x: '{0:02X}'.format(x))
+    lon['B1-hex'] = lon['B1-int'].apply(lambda x: '{0:02X}'.format(x))
+    lon['B2-hex'] = lon['B2-int'].apply(lambda x: '{0:02X}'.format(x))
+    lon['B3-hex'] = lon['B3-int'].apply(lambda x: '{0:02X}'.format(x))
+    lon['B4-hex'] = lon['B4-int'].apply(lambda x: '{0:02X}'.format(x))
+    lon['B5-hex'] = lon['B5-int'].apply(lambda x: '{0:02X}'.format(x))
+    lon['B6-hex'] = lon['B6-int'].apply(lambda x: '{0:02X}'.format(x))
+    lon['B7-hex'] = lon['B7-int'].apply(lambda x: '{0:02X}'.format(x))
+    lon['time'] = [format((0.003 + i / 10), '0.6f') for i in range(len(df))]
+    lon['channel'] = 0
+    lon['asc-msg'] = lon['time'] + " 0 " + can_id + '             Rx  d 8 ' + \
+                     lon['B0-hex'] + ' ' + lon['B1-hex'] + ' ' + lon['B2-hex'] + ' ' + lon['B3-hex'] + ' ' \
+                     + lon['B4-hex'] + ' ' + lon['B5-hex'] + ' ' + lon['B6-hex'] + ' ' + lon['B7-hex'] + ' '
+    # print(lon['asc-msg'])
+    # ang.to_csv("lon.csv", index = False)  # 按指定列名顺序输出df
+    return lon[['time', 'asc-msg']]
 
 
 @func_time
 def merge_message():
     # 删除其他列，合并Message_lat 和Message_lon
-    df0 = pd.read_excel(file_path)
-    df = df0.drop(df0.columns[:-4], axis=1)  # 删除其他列，保留Message_lat 和Message_lon
-    df1 = pd.DataFrame(df.values.ravel('c'), columns=['Message'])
-    pd.concat([df, df1], axis=1).fillna('')
-    df1.to_excel(file_path, index=False)
-
+    global msg_all
+    msg_all = pd.DataFrame()
+    msg_all = pd.concat([date[['time', 'asc-msg']], ang[['time', 'asc-msg']], lat[['time', 'asc-msg']],
+                         lon[['time', 'asc-msg']]])
+    msg_all['time'] = msg_all['time'].astype('float')
+    msg_all.sort_values(by=['time'], ascending=True, inplace=True)
+    print(msg_all)
 
 @func_time
 def msg_to_asc():
@@ -480,9 +559,7 @@ def msg_to_asc():
             datetime.datetime.now().ctime())
         fw.write(string)
         fw.write('\n')
-        df = pd.read_excel(file_path)
-        col = df['Message']
-        lst = pd.Series(col).tolist()
+        lst = msg_all['asc-msg'].values.tolist()
         for i, signal in enumerate(lst):
             fw.write(lst[i])
             fw.write('\n')
@@ -494,20 +571,24 @@ if __name__ == "__main__":
     file_path = os.path.join(path, filename)
     start = time.time()
     bus_interval_time = 0.1  # GPS信号帧间隔,单位秒
-    gps_angle_can_id = '351'  # GPS航向角CAN ID
-    gps_date_can_id = '353'  # GPS日期CAN ID
+    gps_date_can_id = '351'  # GPS日期CAN ID
+    gps_angle_can_id = '353'  # GPS航向角CAN ID
     gps_lat_can_id = '35C'  # GPS纬度CAN ID
     gps_lon_can_id = '35D'  # GPS经度CAN ID
-    vs_h = 60  # 车速, 单位千米/小时
+    vs_h = 300  # 车速, 单位千米/小时
     src = "上海市" + "巨峰路2199号"  # 起点，可以是坐标点，如果是地址需要加上城市
     des = "上海市" + "龙东大道3999号"  # 终点，可以是坐标点，如果是地址需要加上城市
+    elevation = 400
     basetime = "2020-01-17 8:05:50"  # 信号开始时间
     write_log(f'{time.strftime("%Y-%m-%d-%H-%M")}-{src}-{des}-{vs_h}')
     get_polyline(src, des)
     save_poly_to_excel()
     split_data()
     interval_after_lonlat()
-    insert_col_to_excel()
+    datetime_to_msg(gps_date_can_id)
+    angle_to_msg(gps_angle_can_id)
+    lon_to_msg(gps_lon_can_id)
+    lat_to_msg(gps_lat_can_id)
     merge_message()
     msg_to_asc()
     logger.info(f'总计用时{round((time.time() - start),4)}')
