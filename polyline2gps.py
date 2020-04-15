@@ -10,7 +10,16 @@ import time
 import datetime
 import logging
 from functools import wraps
+import webbrowser
+import json
 # import modin.padas as pd
+
+# filename = "高德地图数据采集.xlsx"
+# path = os.getcwd()
+# file_path = os.path.join(path, filename)
+
+
+
 
 
 def func_time(f):
@@ -20,14 +29,53 @@ def func_time(f):
     :return:
     """
     @wraps(f)
-    def wrapper(*angs, **kwangs):
+    def wrapper(*args, **kwargs):
         start_time: float = time.time()
-        result = f(*angs, **kwangs)
+        result = f(*args, **kwargs)
         end_time: float = time.time()
         logger.info(f'{f.__name__}总计用时{round((end_time - start_time),2)}')
         return result
     return wrapper
 
+
+@func_time
+def open_gps_html(filename):
+    with open("gps.js", "r") as f:
+        data_func = f.read()
+    with open(filename, "w") as f:
+        f.write(''.join([
+            '<html>',
+            '<head>',
+            '<meta charset="utf-8"> ',
+            '<meta http-equiv="X-UA-Compatible" content="IE=edge">',
+            '<meta name="viewport" content="initial-scale=1.0, user-scalable=no, width=device-width">',
+            '<title>Polyline Replay</title>',
+            '<link rel="stylesheet" href="https://a.amap.com/jsapi_demos/static/demo-center/css/demo-center.css"/>  ',
+            '<link href="gps.css" rel="stylesheet" type="text/css"/>  ',
+            '</head>  ',
+            '<body>  ',
+            '<div id="container"></div>',
+            '<div class="input-card">',
+            '<h4>Polyline Replay</h4>',
+            '<div class="input-item">',
+            '<input type="button" class="btn" value="Replay" id="start" onclick="startAnimation()"/>',
+            '<input type="button" class="btn" value="Pause" id="pause" onclick="pauseAnimation()"/>',
+            '</div>',
+            '<div class="input-item">',
+            '<input type="button" class="btn" value="Continue" id="resume" onclick="resumeAnimation()"/>',
+            '<input type="button" class="btn" value="Stop" id="stop" onclick="stopAnimation()"/>',
+            '</div>',
+            '</div>',
+            '<script type="text/javascript" src="https://webapi.amap.com/maps?v=1.4.15&key=您申请的key值"></script>',
+            '<script>',
+            line_array,
+            data_func,
+            vs_js,
+            '</script>',
+            '</body>',
+            '</html>'
+        ]))
+    webbrowser.open_new_tab(filename)
 
 def write_log(name):
     global logger
@@ -112,7 +160,6 @@ def get_polyline(src, des):
     """
     origin = get_loc(src)
     destination = get_loc(des)
-    strategy = '距离最短'
     base_url = "https://restapi.amap.com/v3/direction/driving?"
     parameter = {
         'origin': origin,
@@ -123,16 +170,41 @@ def get_polyline(src, des):
     json = res.json()
     # 获取steps字段
     steps = json['route']['paths'][0]['steps']
-    # 写入excel
-    book = openpyxl.Workbook()
-    ws = book.active  # ws操作sheet页
-    sheet = book.create_sheet('Polyline', 0)
-    for i, j in enumerate(steps):
-        pol = steps[i]['polyline']
-        sheet.cell(i + 1, 1).value = 'polyline'
-        sheet.cell(i + 1, 2).value = pol
-    book.save(filename)
-    book.close()
+    # # 写入excel
+    # book = openpyxl.Workbook()
+    # ws = book.active  # ws操作sheet页
+    # sheet = book.create_sheet('Polyline', 0)
+    # for i, j in enumerate(steps):
+    #     pol = steps[i]['polyline']
+    #     sheet.cell(i + 1, 1).value = 'polyline'
+    #     sheet.cell(i + 1, 2).value = pol
+    # book.save(filename)
+    # book.close()
+    polyline_list = []
+    pol_list = [steps[i]['polyline'] for i in range(len(steps))]
+    for pol in pol_list:
+        lst = pol.split(';')
+        for i in lst:
+            polyline_list.append(i)
+    return polyline_list
+
+
+@func_time
+def gcjLocation_to_wgs(src,des):
+    wgsLocation = []
+    gcjLocation = get_polyline(src,des)
+    wgsLocation = [str(gcj2wgs(gcjLocation[i])).replace("(", "").replace(")", "") for i in range(len(gcjLocation))]
+    return wgsLocation
+
+
+#将坐标拆分成经纬度
+@func_time
+def save_location_to_excel(src,des):
+    global wgs84_df
+    wgsLocation = gcjLocation_to_wgs(src,des)
+    df = pd.DataFrame(wgsLocation,columns=['wgsLocation']).drop_duplicates()
+    wgs84_df = df['wgsLocation'].str.split(',',expand = True).rename(columns={0:'lon_wgs84',1:'lat_wgs84'})
+    wgs84_df.to_excel(file_path ,index=False)
 
 
 # 转成十六进制
@@ -145,61 +217,75 @@ def to_hex(wgs):
         ' ' + output0[4:6] + ' ' + output0[6:] + ' '
     return output
 
-
-# 将获取的gcjLocation数据排成一列
-
 @func_time
-def save_poly_to_excel():  # 保存坐标串数据
-    coordinates = []
-    wb = openpyxl.load_workbook(file_path)
-    ws = wb['Polyline']
-    second_column = ws['B']
-    for x in range(len(second_column)):
-        val = second_column[x].value
-        poi = val.split(';')
-        for i in poi:
-            coordinates.append(i)
-    ws1 = wb.create_sheet("Coordinates")
-    ws1.cell(1, 1).value = "gcjLocation"     # 或写成ws1['A1'] = "gcjLocation"
-    ws1.column_dimensions['A'].width = 30  # 设置A列列宽
-    for k, v in enumerate(coordinates):
-        ws1.cell(k + 2, 1).value = v  # 数据写入excel
-    ws1.cell(1, 2).value = "wgsLocation"  # 或写成ws1['A1'] = "gcjLocation"
-    ws1.column_dimensions['B'].width = 30
-    for x, y in enumerate(coordinates):
-        ws1.cell(x +2,2).value = str(gcj2wgs(y)).replace("(", "").replace(")", "")
-    df = pd.DataFrame(ws1.values).drop_duplicates()  # 数据去重
-    df.to_excel(file_path, sheet_name="Coordinates", index=False, header=False)
-    # wb.save(file_path)
+def save_polyline_to_excel(src,des):
+    """
+    保存原始经纬度坐标至excel
+    :param src:
+    :param des:
+    :return:
+    """
+    # global mergedf
+    polyline = get_polyline(src, des)
+    df = pd.DataFrame(polyline, columns=['polyline']).drop_duplicates()
+    orig_df = df['polyline'].str.split(',', expand=True).rename(columns={0: 'orig_lon', 1: 'orig_lat'})
+    # mergedf = pd.concat([wgs84_df, orig_df], axis=1).fillna('')
+    # print(mergedf)
+    orig_df.to_excel(orig_file, index=False)
 
-
-# 将坐标差分成经纬度
-
-@func_time
-def split_data():
-    lon_wgs84 = []
-    lat_wgs84 = []
-    global col
-    wb = openpyxl.load_workbook(file_path)
-    ws1 = wb['Coordinates']
-    ws1.cell(1, 3).value = "lon_wgs84"
-    ws1.cell(1, 4).value = "lat_wgs84"
-    col = ws1['B']
-    for x in range(1, len(col)):
-        vals = col[x].value
-        datas = vals.split(',')
-        for index, data in enumerate(datas):
-            if index == 0:
-                lon_wgs84.append(data)
-            else:
-                lat_wgs84.append(data)
-    for a, b in enumerate(lon_wgs84):
-        ws1.cell(a + 2, 3).value = b  # 数据写入excel
-    for c, d in enumerate(lat_wgs84):
-        ws1.cell(c + 2, 4).value = d
-    # return lon_wgs84,lat_wgs84
-    wb.save(file_path)
-    wb.close()
+# # 将获取的gcjLocation数据排成一列
+# @func_time
+# # def save_poly_to_excel():  # 保存坐标串数据
+# #     coordinates = []
+# #     wb = openpyxl.load_workbook(file_path)
+#     ws = wb['Polyline']
+#     second_column = ws['B']
+#     for x in range(len(second_column)):
+#         val = second_column[x].value
+#         poi = val.split(';')
+#         for i in poi:
+#             coordinates.append(i)
+#     ws1 = wb.create_sheet("Coordinates")
+#     ws1.cell(1, 1).value = "gcjLocation"     # 或写成ws1['A1'] = "gcjLocation"
+#     ws1.column_dimensions['A'].width = 30  # 设置A列列宽
+#     for k, v in enumerate(coordinates):
+#         ws1.cell(k + 2, 1).value = v  # 数据写入excel
+#     ws1.cell(1, 2).value = "wgsLocation"  # 或写成ws1['A1'] = "gcjLocation"
+#     ws1.column_dimensions['B'].width = 30
+#     for x, y in enumerate(coordinates):
+#         ws1.cell(x +2,2).value = str(gcj2wgs(y)).replace("(", "").replace(")", "")
+#     df = pd.DataFrame(ws1.values).drop_duplicates()  # 数据去重
+#     df.to_excel(file_path, sheet_name="Coordinates", index=False, header=False)
+#     # wb.save(file_path)
+#
+#
+# # 将坐标差分成经纬度
+#
+# @func_time
+# def split_data():
+#     lon_wgs84 = []
+#     lat_wgs84 = []
+#     global col
+#     wb = openpyxl.load_workbook(file_path)
+#     ws1 = wb['Coordinates']
+#     ws1.cell(1, 3).value = "lon_wgs84"
+#     ws1.cell(1, 4).value = "lat_wgs84"
+#     col = ws1['B']
+#     for x in range(1, len(col)):
+#         vals = col[x].value
+#         datas = vals.split(',')
+#         for index, data in enumerate(datas):
+#             if index == 0:
+#                 lon_wgs84.append(data)
+#             else:
+#                 lat_wgs84.append(data)
+#     for a, b in enumerate(lon_wgs84):
+#         ws1.cell(a + 2, 3).value = b  # 数据写入excel
+#     for c, d in enumerate(lat_wgs84):
+#         ws1.cell(c + 2, 4).value = d
+#     # return lon_wgs84,lat_wgs84
+#     wb.save(file_path)
+#     wb.close()
 
 
 
@@ -217,17 +303,60 @@ def interpolation(loc1, loc2, a, b, vs_h):
     delta = abs((a - b) / n)  # 步长
     if a > b:
         interValue = np.arange(a, b, -delta)
-    else:
+    elif a<b:
         interValue = np.arange(a, b, delta)
+    elif a==b:
+        interValue = np.linspace(a,b,n+1)
     return interValue
 
 
+def interval_after_orig_lonlat():  # 将插值后的原始经纬度值写入表中
+    interOrigLonList = []
+    interOrigLatList = []
+    # df = pd.read_excel(file_path).drop_duplicates().head(10)
+    df = pd.read_excel(orig_file).drop_duplicates()
+    orig_lat = pd.Series(df['orig_lat']).tolist()
+    orig_lon = pd.Series(df['orig_lon']).tolist()
+    orig_loc = list(zip(orig_lat, orig_lon))
+    for i in range(len(orig_loc)):
+        if i < len(orig_loc) - 1:
+            interOrigLon = interpolation(
+                orig_loc[i], orig_loc[i + 1], orig_lon[i], orig_lon[i + 1], vs_h)
+            interOrigLonList.extend(pd.Series(interOrigLon))
+            interOrigLat = interpolation(
+                orig_loc[i], orig_loc[i + 1], orig_lat[i], orig_lat[i + 1], vs_h)
+            interOrigLatList.extend(pd.Series(interOrigLat))
+        else:
+            break
+    df.drop(df.columns[:], axis=1)
+    df = pd.concat([pd.DataFrame({'origLonValues': interOrigLonList}), pd.DataFrame(
+        {'origLatValues': interOrigLatList})], axis=1)
+    df.to_excel(orig_file, sheet_name="Coordinates", index=False)
+
 
 @func_time
-def interval_after_lonlat():  # 将插值后的经纬度值写入表中
+def get_linearr(): #获取lineArr数组
+    global line_array, vs_js
+    df0 = pd.read_excel(orig_file)
+    lonlist = df0['origLonValues'].tolist()
+    latlist = df0['origLatValues'].tolist()
+    lineArr = [[lonlist[i], latlist[i]] for i in range(len(lonlist))]
+    linestr = [(str(i)+',') for i in lineArr]
+    a = ''
+    b = a.join(linestr)
+    # print(b)
+    line_array = ('var lineArr = '+ '['+ b[:-1]+ '];')
+    # print(line_array)
+    # "var map = new AMap.Map("container", {resizeEnable: true,center: ["+ linestr[0] + "],zoom: 17});"
+    vs_js = "function startAnimation () { marker.moveAlong(lineArr, "+ str(vs_h) +");}"
+    # marker = new AMap.Marker({map: map,position: [116.478935, 39.997761],icon: "https://webapi.amap.com/images/car.png",offset: new AMap.Pixel(-26, -13),autoRotation: true,angle: -90,});
+
+
+@func_time
+def interval_after_lonlat():  # 将插值后的wgs84格式经纬度值写入表中
     interLonList = []
     interLatList = []
-    global vs_h, df
+    global df
     # df = pd.read_excel(file_path).drop_duplicates().head(10)
     df = pd.read_excel(file_path).drop_duplicates()
     lat = pd.Series(df['lat_wgs84']).tolist()
@@ -247,7 +376,7 @@ def interval_after_lonlat():  # 将插值后的经纬度值写入表中
     df = pd.concat([pd.DataFrame({'lonValues': interLonList}), pd.DataFrame(
         {'latValues': interLatList})], axis=1)
     df.to_excel(file_path, sheet_name="Coordinates", index=False)
-    # print(df)
+
 
 def series(lst, length):
     """
@@ -549,7 +678,7 @@ def merge_message():
                          lon[['time', 'asc-msg']]])
     msg_all['time'] = msg_all['time'].astype('float')
     msg_all.sort_values(by=['time'], ascending=True, inplace=True)
-    print(msg_all)
+    # print(msg_all)
 
 @func_time
 def msg_to_asc():
@@ -566,6 +695,7 @@ def msg_to_asc():
 
 
 if __name__ == "__main__":
+    orig_file = "原始坐标.xlsx"
     filename = "高德地图数据采集.xlsx"
     path = os.getcwd()
     file_path = os.path.join(path, filename)
@@ -575,20 +705,24 @@ if __name__ == "__main__":
     gps_angle_can_id = '353'  # GPS航向角CAN ID
     gps_lat_can_id = '35C'  # GPS纬度CAN ID
     gps_lon_can_id = '35D'  # GPS经度CAN ID
-    vs_h = 300  # 车速, 单位千米/小时
-    src = "上海市" + "巨峰路2199号"  # 起点，可以是坐标点，如果是地址需要加上城市
-    des = "上海市" + "龙东大道3999号"  # 终点，可以是坐标点，如果是地址需要加上城市
-    elevation = 400
+    vs_h = 80000  # 车速, 单位千米/小时
+    src = "上海市" + "巨峰路地铁站"  # 起点，可以是坐标点，如果是地址需要加上城市
+    des = "上海市" + "虹桥国际机场"  # 终点，可以是坐标点，如果是地址需要加上城市
+    strategy = '不走高速' #高速优先  躲避拥堵  不走高速  避免收费
+    elevation = 400  # interval_after_orig_lonlat()
     basetime = "2020-01-17 8:05:50"  # 信号开始时间
     write_log(f'{time.strftime("%Y-%m-%d-%H-%M")}-{src}-{des}-{vs_h}')
     get_polyline(src, des)
-    save_poly_to_excel()
-    split_data()
+    save_location_to_excel(src, des)
+    save_polyline_to_excel(src, des)
+    interval_after_orig_lonlat()
+    get_linearr()
+    open_gps_html("gps.html")
     interval_after_lonlat()
-    datetime_to_msg(gps_date_can_id)
-    angle_to_msg(gps_angle_can_id)
-    lon_to_msg(gps_lon_can_id)
-    lat_to_msg(gps_lat_can_id)
-    merge_message()
-    msg_to_asc()
+    # datetime_to_msg(gps_date_can_id)
+    # angle_to_msg(gps_angle_can_id)
+    # lon_to_msg(gps_lon_can_id)
+    # lat_to_msg(gps_lat_can_id)
+    # merge_message()
+    # msg_to_asc()
     logger.info(f'总计用时{round((time.time() - start),4)}')
