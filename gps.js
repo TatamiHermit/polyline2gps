@@ -40,9 +40,6 @@ marker.on('moving', function (e) {
 
 map.setFitView();
 
-//function startAnimation () {
-//    marker.moveAlong(lineArr, 8000);
-//}
 
 function pauseAnimation () {
     marker.pauseMove();
